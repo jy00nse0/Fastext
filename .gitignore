@@ -1,0 +1,16 @@
+# Compiled binaries
+Fastext_patched
+*.o
+*.out
+*.exe
+
+# Build directories
+build/
+dist/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

@@ -5,10 +5,11 @@
 #include <algorithm>
 #include <random>
 #include <mutex>
+#include <memory>
 
 // === Row-level locks for syn0 & syn1neg ===
-std::vector<std::mutex> syn0_lock;
-std::vector<std::mutex> syn1neg_lock;
+std::vector<std::unique_ptr<std::mutex>> syn0_lock;
+std::vector<std::unique_ptr<std::mutex>> syn1neg_lock;
 
 //  Copyright 2013 Google Inc. All Rights Reserved.
 //
@@ -799,8 +800,14 @@ void InitNet() {
 
     // === initialize row-level locks ===
     syn0_lock.resize(vocab.size() + bucket_size);
+    for (size_t i = 0; i < syn0_lock.size(); i++) {
+        syn0_lock[i] = std::unique_ptr<std::mutex>(new std::mutex());
+    }
     if (negative > 0) {
         syn1neg_lock.resize(vocab.size());
+        for (size_t i = 0; i < syn1neg_lock.size(); i++) {
+            syn1neg_lock[i] = std::unique_ptr<std::mutex>(new std::mutex());
+        }
     }
 }
 
@@ -958,7 +965,7 @@ void model_update(
     for (int i = 0; i < inputSize; i++) {
         int row = input[i];
         {
-            std::lock_guard<std::mutex> guard(syn0_lock[row]);
+            std::lock_guard<std::mutex> guard(*syn0_lock[row]);
             for (int j = 0; j < layer1_size; j++) {
                 float old_val = syn0[row * layer1_size + j];
                 syn0[row * layer1_size + j] += state->grad[j];
@@ -1262,7 +1269,7 @@ float loss_forward(const int* targets, int targetIndex, struct model_State* stat
             if (isUpdate) {
                 // === PATCH: Row-level mutate lock for syn1neg ===
                 {
-                    std::lock_guard<std::mutex> guard(syn1neg_lock[target]);
+                    std::lock_guard<std::mutex> guard(*syn1neg_lock[target]);
                     for (c = 0; c < layer1_size; c++) {
                         syn1neg[c + l2] += g * state->hidden[c];
                     }
@@ -1622,7 +1629,10 @@ int main(int argc, char** argv)
 #ifdef _MSC_VER
     vocab_hash = (int*)_aligned_malloc(vocab_hash_size * sizeof(int), 64);
 #else
-    posix_memalign((void**)&vocab_hash, 64, vocab_hash_size * sizeof(int));
+    if (posix_memalign((void**)&vocab_hash, 64, vocab_hash_size * sizeof(int)) != 0) {
+        fprintf(stderr, "Error: Failed to allocate aligned memory for vocab_hash\n");
+        exit(1);
+    }
 #endif
     expTable = (float*)malloc((EXP_TABLE_SIZE + 1) * sizeof(float));
     for (i = 0; i < EXP_TABLE_SIZE; i++) {
