@@ -79,6 +79,7 @@ struct model_State {
     float* grad;
     //unsigned long long rng;
     std::minstd_rand rng;
+    unsigned long long next_random; // Per-thread LCG state for fastText-style RNG
         // 생성자 정의
     //set_State(int hiddenSize, int outputSize, int seed) : lossValue_(0.0f), nexamples_(0), hidden(hiddenSize),
     //                output(outputSize), grad(hiddenSize), rng(seed) {}
@@ -88,8 +89,20 @@ struct model_State {
         hidden(nullptr),
         output(nullptr),
         grad(nullptr),
-        rng(seed) {}
+        rng(seed),
+        next_random(seed) {} // Initialize LCG state with seed
 };
+
+// Lightweight per-thread LCG RNG (matching fastText constants for performance)
+// Uses original fastText linear congruential generator parameters
+inline unsigned long long lcg_next(model_State* s) {
+    s->next_random = s->next_random * 25214903917ULL + 11ULL;
+    return s->next_random;
+}
+
+inline unsigned int lcg_rand_range(model_State* s, unsigned int n) {
+    return (unsigned int)((lcg_next(s) >> 16) % n);
+}
 
 
 char train_file[MAX_STRING], output_file[MAX_STRING];
@@ -806,11 +819,10 @@ void cbow(struct model_State* state, float alpha, const std::vector<int>& line)
     int line_size = line.size();
     int w;
     std::vector<int> bow;
-    std::uniform_int_distribution<> uniform(1, window);
     bow.reserve(window * 2 * 5); // 윈도우 크기 * 양방향 * 평균 서브워드 수
     for (w = 0; w < line_size; w++) {
         //int boundary = 1 + (state->rng % window); // random boundary in [1, window]
-        int boundary =  uniform(state->rng);
+        int boundary = (int)(lcg_rand_range(state, (unsigned int)window) + 1);
         bow.clear();
         for (int c = -boundary; c <= boundary; c++) {
             if (c != 0 && w + c >= 0 && w + c < line_size) {
@@ -827,12 +839,11 @@ void cbow(struct model_State* state, float alpha, const std::vector<int>& line)
 
 
 void skipgram(struct model_State* state,float alpha,const std::vector<int>& line) {
-    std::uniform_int_distribution<> uniform(1, window);
     int line_size = line.size();
     if (debug_mode > 1) printf("totaltoskip %d \n", line_size);
     for (int w = 0; w < line_size; w++) {
         //int boundary = 1 + (state->rng % window); // random boundary in [1, window]
-        int boundary =  uniform(state->rng);
+        int boundary = (int)(lcg_rand_range(state, (unsigned int)window) + 1);
         const std::vector<int> ngrams = vocab[line[w]].subwords;
         for (int c = -boundary; c <= boundary; c++) {
             if (c != 0 && w + c >= 0 && w + c < line_size) {
@@ -871,9 +882,7 @@ void supervised(
         model_update(line, labels, -1, alpha, state); // -1 for all labels as target
     }
     else {
-        std::uniform_int_distribution<> uniform(1, window);
-
-        int i = uniform(state->rng) % labels_size;
+        int i = lcg_rand_range(state, (unsigned int)labels_size);
         model_update(line, labels, i, alpha, state);
     }
 }
@@ -1035,8 +1044,6 @@ float loss_forward(const int* targets, int targetIndex, struct model_State* stat
     }
 
     if (loss_name == 0) { /* negative sampling */
-        std::uniform_int_distribution<size_t> uniform_dist(0, table_size - 1);
-
         for (d = 0; d < negative + 1; d++) {
             int target;
             int label;
@@ -1046,7 +1053,7 @@ float loss_forward(const int* targets, int targetIndex, struct model_State* stat
             }
             else {
                 do {
-                  target = table[uniform_dist(state->rng)];
+                  target = table[lcg_rand_range(state, (unsigned int)table_size)];
                 } while (target == word);
                 label = 0;
             }
@@ -1233,7 +1240,7 @@ void* TrainModelThread(void* arg) {
         // 0.000005
         //alpha = (alpha > starting_alpha * 0.0001f) ? alpha : starting_alpha * 0.0001f;
         float alpha = starting_alpha * (1.0f - progress);
-        float alpha = (alpha > starting_alpha * 0.0001f) ? alpha : starting_alpha * 0.0001f;
+        alpha = (alpha > starting_alpha * 0.0001f) ? alpha : starting_alpha * 0.0001f;
         if (threadId == 0) {
              if (progress > progress_min) {
                 printProgress(tokenCount_, totaltokens, iter, start, alpha);
