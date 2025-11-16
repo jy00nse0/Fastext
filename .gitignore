@@ -1,5 +1,6 @@
 # Compiled binaries
 Fastext_patched
+fastext_test1
 *.o
 *.out
 *.exe
