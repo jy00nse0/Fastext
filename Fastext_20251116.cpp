@@ -1312,6 +1312,17 @@ int main(int argc, char** argv)
     output_file[0] = 0;
     save_vocab_file[0] = 0;
     read_vocab_file[0] = 0;
+
+    // Initialize requested defaults before parsing command-line arguments
+    seed = 0;
+    starting_alpha = 0.05f;
+    num_threads = 12;
+    debug_mode = 0;
+    minn = 3;
+    maxn = 6;
+    window = 5;
+    min_count = 5;
+
     int i;
 #ifdef _MSC_VER
 
@@ -1347,37 +1358,9 @@ int main(int argc, char** argv)
     if ((i = ArgPos((char*)"-classes", argc, argv)) > 0) classes = atoi(argv[i + 1]);
     if ((i = ArgPos((char*)"-seed", argc, argv)) > 0) seed = atoi(argv[i + 1]);
 
-    if (model_name == 0) starting_alpha = 0.05;
-    // 0 = cbow; 1 = skip-gram; 2 = supervised
-     // 0 = ns; 1 = hs; 2 = softmax 3 = ova
-#ifdef _MSC_VER
-    strcpy_s(train_file, sizeof(train_file), "wiki.ar.txt");
-    strcpy_s(output_file, sizeof(output_file), "arvec2.bin");
-    strcpy_s(save_model_file, sizeof(save_model_file), "armodel2.bin");
-#else
-    //strcpy(train_file, "enwiki.txt");
+    // Removed the previous hard-coded debug/training overrides so command-line args are honored.
+    // Defaults were already set above. Users should supply -train, -output etc. via command-line.
 
-    strcpy(train_file, "wiki.ar.50M.txt");
-    //strcpy(train_file, "./data/wikimedia/ar/wiki.ar.50M.txt");
-    //strcpy(output_file, "envec.bin");
-    //strcpy(save_model_file, "enmodel.bin");
-    strcpy(output_file, "samvec.bin");
-    strcpy(save_model_file, "sammodel.bin");
-#endif
-    debug_mode = 0;
-    binary = 1;                      // binary format 저장
-    model_name = 1;                  // 0 = cbow, 1 = skip-gram, 2 = supervised
-    layer1_size = 300;               // vector dimension = 300
-    window = 5;                      // context window 최대 크기 = 5
-    loss_name = 0;                   // 0 = negative sampling, 1 = hs, 2 = softmax, 3 = ova
-    negative = 5;                    // negative samples = 5
-    num_threads = 12;                 // 쓰레드 수
-    iter = 5;                        // iteration 수
-    min_count = 5;                   // 최소 출현 횟수 = 5
-    starting_alpha = (model_name == 0) ? 0.05 : 0.05; // cbow/our model: 0.05, skipgram: 0.025
-    seed = 0;                      // random seed
-    minn = 3;                        // 최소 n-gram 길이 (fastText 논문 설정)
-    maxn = 6;                        // 최대 n-gram 길이 (fastText 논문 설정)
     vocab.clear();
     vocab.reserve((size_t)vocab_max_size);
 #ifdef _MSC_VER
@@ -1402,4 +1385,3 @@ int main(int argc, char** argv)
 
 
 }
-
