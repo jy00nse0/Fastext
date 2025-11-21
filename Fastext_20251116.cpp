@@ -1312,6 +1312,7 @@ int main(int argc, char** argv)
     output_file[0] = 0;
     save_vocab_file[0] = 0;
     read_vocab_file[0] = 0;
+    int i;
 #ifdef _MSC_VER
 
     if ((i = ArgPos((char*)"-train", argc, argv)) > 0) strcpy_s(train_file, sizeof(train_file), argv[i + 1]);
@@ -1401,3 +1402,4 @@ int main(int argc, char** argv)
 
 
 }
+
