@@ -138,16 +138,32 @@ class WordVectors:
                 model_arg = struct.unpack('i', f.read(4))[0]
                 epoch_arg = struct.unpack('i', f.read(4))[0]
                 minCount_arg = struct.unpack('q', f.read(8))[0]
-                label_arg_len = struct.unpack('i', f.read(4))[0]
-                label_arg = f.read(label_arg_len).decode('utf-8')
+                label_arg_len_data = f.read(4)
+                if len(label_arg_len_data) != 4:
+                    raise ValueError("File truncated: cannot read label_arg length")
+                label_arg_len = struct.unpack('i', label_arg_len_data)[0]
+                if label_arg_len < 0 or label_arg_len > 1000:
+                    raise ValueError(f"Invalid label_arg length: {label_arg_len}")
+                label_arg_data = f.read(label_arg_len)
+                if len(label_arg_data) != label_arg_len:
+                    raise ValueError(f"File truncated: expected {label_arg_len} bytes for label_arg")
+                label_arg = label_arg_data.decode('utf-8')
                 t_arg = struct.unpack('d', f.read(8))[0]
                 lrUpdateRate_arg = struct.unpack('i', f.read(4))[0]
                 dim_arg = struct.unpack('i', f.read(4))[0]
                 ws_arg = struct.unpack('i', f.read(4))[0]
                 lr_arg = struct.unpack('d', f.read(8))[0]
                 verbose_arg = struct.unpack('i', f.read(4))[0]
-                pretrainedVectors_arg_len = struct.unpack('i', f.read(4))[0]
-                pretrainedVectors_arg = f.read(pretrainedVectors_arg_len).decode('utf-8')
+                pretrainedVectors_arg_len_data = f.read(4)
+                if len(pretrainedVectors_arg_len_data) != 4:
+                    raise ValueError("File truncated: cannot read pretrainedVectors_arg length")
+                pretrainedVectors_arg_len = struct.unpack('i', pretrainedVectors_arg_len_data)[0]
+                if pretrainedVectors_arg_len < 0 or pretrainedVectors_arg_len > 10000:
+                    raise ValueError(f"Invalid pretrainedVectors_arg length: {pretrainedVectors_arg_len}")
+                pretrainedVectors_arg_data = f.read(pretrainedVectors_arg_len)
+                if len(pretrainedVectors_arg_data) != pretrainedVectors_arg_len:
+                    raise ValueError(f"File truncated: expected {pretrainedVectors_arg_len} bytes for pretrainedVectors_arg")
+                pretrainedVectors_arg = pretrainedVectors_arg_data.decode('utf-8')
                 saveOutput_arg = struct.unpack('?', f.read(1))[0]
                 seed_arg = struct.unpack('i', f.read(4))[0]
                 qout_arg = struct.unpack('?', f.read(1))[0]
