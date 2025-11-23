@@ -8,9 +8,17 @@ Fastext_patched
 build/
 dist/
 
+# Model files
+*.model
+*.vec
+
 # IDE and editor files
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+
+# Python cache
+__pycache__/
+*.pyc
