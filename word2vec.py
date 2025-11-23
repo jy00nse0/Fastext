@@ -21,7 +21,6 @@ def utf8_readword_generator(path, chunk_size=65536, progress_callback=None):
         buf = []
         chunk_buf = b''
         pos = 0
-        total_processed = 0
         
         while True:
             # Refill chunk buffer if needed
@@ -29,7 +28,6 @@ def utf8_readword_generator(path, chunk_size=65536, progress_callback=None):
                 chunk_buf = f.read(chunk_size)
                 pos = 0
                 if progress_callback and chunk_buf:
-                    total_processed += len(chunk_buf)
                     progress_callback(len(chunk_buf))
                 if not chunk_buf:
                     if buf:
@@ -74,7 +72,6 @@ def utf8_readword_generator(path, chunk_size=65536, progress_callback=None):
                         chunk_buf = f.read(chunk_size)
                         pos = 0
                         if progress_callback and chunk_buf:
-                            total_processed += len(chunk_buf)
                             progress_callback(len(chunk_buf))
                         if not chunk_buf:
                             break
@@ -110,26 +107,25 @@ class Sentences:
     """
     Re-iterable sentences iterator without progress tracking.
     Used when progress is disabled to maintain backward compatibility.
+    Yields sentences for one pass through the corpus per iteration.
     """
     
-    def __init__(self, corpus_path, epochs):
+    def __init__(self, corpus_path):
         self.corpus_path = corpus_path
-        self.epochs = epochs
     
     def __iter__(self):
         """Make this class re-iterable for gensim"""
-        for epoch in range(self.epochs):
-            sent = []
-            for w in utf8_readword_generator(self.corpus_path):
-                if w == "</s>":
-                    if sent:
-                        yield sent
-                        sent = []
-                else:
-                    sent.append(w)
-            
-            if sent:
-                yield sent
+        sent = []
+        for w in utf8_readword_generator(self.corpus_path):
+            if w == "</s>":
+                if sent:
+                    yield sent
+                    sent = []
+            else:
+                sent.append(w)
+        
+        if sent:
+            yield sent
 
 
 ############################################################
@@ -212,34 +208,32 @@ class ProgressTracker:
 class SentencesWithProgress:
     """
     Re-iterable sentences iterator with progress tracking.
-    Yields sentences for multiple epochs, tracking progress and invoking callback.
+    Yields sentences for one pass through the corpus per iteration, tracking progress.
     """
     
-    def __init__(self, corpus_path, epochs, progress_tracker=None):
+    def __init__(self, corpus_path, progress_tracker=None):
         self.corpus_path = corpus_path
-        self.epochs = epochs
         self.progress_tracker = progress_tracker
     
     def __iter__(self):
         """Make this class re-iterable for gensim"""
-        for epoch in range(self.epochs):
-            sent = []
-            
-            def progress_callback(bytes_count):
-                if self.progress_tracker:
-                    self.progress_tracker.update(bytes_count)
-                    self.progress_tracker.print_progress()
-            
-            for w in utf8_readword_generator(self.corpus_path, progress_callback=progress_callback):
-                if w == "</s>":
-                    if sent:
-                        yield sent
-                        sent = []
-                else:
-                    sent.append(w)
-            
-            if sent:
-                yield sent
+        sent = []
+        
+        def progress_callback(bytes_count):
+            if self.progress_tracker:
+                self.progress_tracker.update(bytes_count)
+                self.progress_tracker.print_progress()
+        
+        for w in utf8_readword_generator(self.corpus_path, progress_callback=progress_callback):
+            if w == "</s>":
+                if sent:
+                    yield sent
+                    sent = []
+            else:
+                sent.append(w)
+        
+        if sent:
+            yield sent
 
 
 ############################################################
@@ -264,11 +258,10 @@ def train_word2vec(
     if progress:
         # Use progress-enabled re-iterable sentences
         file_size = os.path.getsize(corpus_path)
-        # Note: We use epochs=1 in SentencesWithProgress and let Word2Vec handle epochs
-        # because gensim needs to iterate over corpus: 1 pass for vocab + epochs passes for training
+        # Gensim iterates corpus (epochs+1) times: 1 pass for vocab building + epochs passes for training
         total_bytes = file_size * (epochs + 1)
         tracker = ProgressTracker(total_bytes, progress_interval, progress_min_step_percent)
-        sentences = SentencesWithProgress(corpus_path, 1, tracker)
+        sentences = SentencesWithProgress(corpus_path, tracker)
         
         print(f"Training with progress tracking enabled (file: {file_size} bytes, epochs: {epochs}, total: {total_bytes} bytes)")
         model = Word2Vec(
@@ -280,13 +273,13 @@ def train_word2vec(
             sg=sg,
             negative=negative,
             sample=sample,
-            epochs=epochs,  # Let Word2Vec handle epochs
+            epochs=epochs,
             alpha=alpha,
         )
         tracker.finish()
     else:
         # Use re-iterable sentences without progress tracking
-        sentences = Sentences(corpus_path, epochs)
+        sentences = Sentences(corpus_path)
         model = Word2Vec(
             sentences=sentences,
             vector_size=vector_size,
@@ -296,7 +289,7 @@ def train_word2vec(
             sg=sg,
             negative=negative,
             sample=sample,
-            epochs=1,  # Sentences class handles epochs internally
+            epochs=epochs,
             alpha=alpha,
         )
     return model
