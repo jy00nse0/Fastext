@@ -59,12 +59,12 @@ class WordVectors:
         
         print(f"Loaded {len(self.word_to_vec)} word vectors")
         
-        # Normalize vectors for cosine similarity
+        # Normalize vectors for cosine similarity (in-place for memory efficiency)
         print("Normalizing vectors...")
         for word in self.word_to_vec:
             norm = np.linalg.norm(self.word_to_vec[word])
             if norm > 0:
-                self.word_to_vec[word] = self.word_to_vec[word] / norm
+                self.word_to_vec[word] /= norm
     
     def __contains__(self, word):
         """Check if word exists in vocabulary"""
@@ -132,6 +132,10 @@ def download_czech_analogy_files(output_dir="./czech_analogies"):
             urllib.request.urlretrieve(url, output_path)
             print(f"  Saved to {output_path}")
             downloaded.append(output_path)
+        except urllib.error.HTTPError as e:
+            print(f"  HTTP Error downloading {filename}: {e.code} {e.reason}")
+        except urllib.error.URLError as e:
+            print(f"  URL Error downloading {filename}: {e.reason}")
         except Exception as e:
             print(f"  Error downloading {filename}: {e}")
     
@@ -178,6 +182,8 @@ def convert_csv_pairs_to_analogies(csv_files, output_path):
             
             # Generate analogies: for each pair of pairs, create analogy
             # a:b :: c:d where (a,b) and (c,d) are different pairs
+            # Note: This generates O(n²) analogies for n pairs, which is the standard
+            # approach for comprehensive analogy testing (same as cz_corpus)
             for i, (a, b) in enumerate(pairs):
                 for j, (c, d) in enumerate(pairs):
                     if i != j:  # Don't use the same pair twice
@@ -217,7 +223,7 @@ def load_analogy_test_file(test_path):
             # Analogy line
             parts = line.split()
             if len(parts) != 4:
-                print(f"Warning: Invalid format at line {line_num}: {line}")
+                print(f"Warning: Invalid format at line {line_num}: expected 4 words (a b c d), got {len(parts)}: {line}")
                 continue
             
             a, b, c, d = parts
