@@ -254,8 +254,8 @@ def read_test_words_from_csv(csv_path: str) -> List[str]:
                 part = part.strip()
                 # Skip empty parts, numbers, and common non-word entries
                 if part and not part.replace('.', '').replace('-', '').isdigit():
-                    # Skip single character parts that are likely labels (n, v, a)
-                    if len(part) > 1 or not part.isalpha():
+                    # Skip single character alphabetic parts that are likely labels (n, v, a)
+                    if len(part) > 1:
                         words.add(part)
     
     word_list = sorted(list(words))
