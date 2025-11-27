@@ -28,7 +28,7 @@ python word2vec.py --corpus corpus.txt --output model_name
 Czech word analogy test script based on the fastText analogies() implementation.
 
 **Features:**
-- Loads word vectors from fastText .vec format
+- Loads word vectors from fastText .vec (text) or .bin (binary) format
 - Tests analogies using vector arithmetic (a:b :: c:d → vec(b) - vec(a) + vec(c) ≈ vec(d))
 - Downloads Czech analogy test sets from [cz_corpus repository](https://github.com/Svobikl/cz_corpus)
 - Supports CSV pair file conversion
@@ -39,8 +39,9 @@ Czech word analogy test script based on the fastText analogies() implementation.
 
 Download and test with Czech analogy corpus:
 ```bash
-# Download Czech test sets and run tests
+# Download Czech test sets and run tests (supports both .vec and .bin formats)
 python analogy_test_cs.py --vectors vec_cs.vec --download-test
+python analogy_test_cs.py --vectors vec_cs.bin --download-test
 
 # Use specific test file
 python analogy_test_cs.py --vectors vec_cs.vec --test-file czech_emb_corpus_no_phrase.txt
