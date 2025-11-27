@@ -616,7 +616,7 @@ int get_line_sub(FILE* fin, std::vector<int>& words, std::vector<int>& labels) {
             add_subwords(words, token, wid);
         }
         else if (type == 1 && wid >= 0) {
-            labels.push_back(wid - (int)vocab.size());
+            labels.push_back(wid);
         }
         if (strcmp(token, EOS) == 0) {
             break;
