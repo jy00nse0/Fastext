@@ -1,0 +1,1 @@
+/home/runner/work/Fastext/.codeql-scratch/dbs/cpp/working/autobuild/bin/c++  -O2 -Wall -pthread -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/fastext_single.dir/link.d CMakeFiles/fastext_single.dir/Fastext.cpp.o -o fastext_single
