@@ -58,7 +58,7 @@ struct vocab_word {
 std::vector<vocab_word> vocab;
 char train_file[MAX_STRING], output_file[MAX_STRING];
 char save_vocab_file[MAX_STRING], read_vocab_file[MAX_STRING], save_model_file[MAX_STRING];
-int binary = 0, debug_mode = 2, window = 5, min_count = 5, num_threads = 12, min_reduce = 1; int label_count = 0;
+int binary = 0, debug_mode = 2, window = 5, min_count = 5, num_threads = 12, min_reduce = 1; int label_count = 0; long long nwords_ = 0;
 int* vocab_hash; int minn = 3; int maxn = 6; int model_name = 2; int loss_name = 0; long long seed = 0;
 long long vocab_max_size = 30000000, layer1_size = 100, bucket_size = 2000000; long long tokenCount_ = 0;
 long long train_words = 0, word_count_actual = 0, iter = 5, file_size = 0, classes = 0;
@@ -493,6 +493,16 @@ void LearnVocabFromTrainFile() {
     printf("After min_count filtering: vocab size = %zu, train_words = %lld\n",
         vocab.size(), train_words);
 
+    // Count labels and compute nwords_
+    label_count = 0;
+    for (size_t i = 0; i < vocab.size(); i++) {
+        if (vocab[i].type == 1) {
+            label_count++;
+        }
+    }
+    nwords_ = (long long)vocab.size() - label_count;
+    if (debug_mode > 0) printf("nwords_=%lld, label_count=%d\n", nwords_, label_count);
+
     initNgrams();
     file_size = ftell(fin);
     fclose(fin);
@@ -616,7 +626,7 @@ int get_line_sub(FILE* fin, std::vector<int>& words, std::vector<int>& labels) {
             add_subwords(words, token, wid);
         }
         else if (type == 1 && wid >= 0) {
-            labels.push_back(wid - (int)vocab.size());
+            labels.push_back(wid - (int)nwords_);
         }
         if (strcmp(token, EOS) == 0) {
             break;
@@ -802,6 +812,10 @@ float loss_forward(const int* targets, int targetIndex, struct model_State* stat
         return 0.0f;
     }
     int word = targets[targetIndex];
+    // For supervised learning, convert relative label index back to vocabulary index
+    if (model_name == 2) {
+        word = word + (int)nwords_;
+    }
     const float EPS = LOSS_EPS;
     if (debug_mode > 1) printf("loss forward %lld \n", train_words);
     if (debug_mode > 1) printf("[loss_forward] targetIndex=%d, word=%d\n", targetIndex, word);

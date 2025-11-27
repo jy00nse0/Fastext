@@ -22,3 +22,6 @@ dist/
 # Python cache
 __pycache__/
 *.pyc
+
+# CodeQL build artifacts
+_codeql_build_dir/
