@@ -10,7 +10,29 @@ Original file is located at
 import numpy as np
 import sys
 import os
+import argparse
 from scipy.stats import spearmanr
+
+def load_oov_vectors(npz_path):
+    """NPZ 파일에서 OOV 단어 벡터 로드
+    
+    Args:
+        npz_path: OOV 단어 벡터가 저장된 NPZ 파일 경로
+        
+    Returns:
+        dict: {word: vector} 형태의 딕셔너리
+    """
+    oov_vectors = {}
+    print(f"Loading OOV vectors from {npz_path}...")
+    try:
+        data = np.load(npz_path)
+        for word in data.keys():
+            oov_vectors[word] = data[word].astype(np.float32)
+        print(f"Loaded {len(oov_vectors)} OOV vectors.")
+    except Exception as e:
+        print(f"Error loading OOV vectors from {npz_path}: {e}")
+        raise e
+    return oov_vectors
 
 def load_text_vectors(vector_path):
     """FastText 텍스트 포맷 벡터 로드 (사용자 제공 함수)"""
@@ -226,16 +248,46 @@ def evaluate_analogy(vectors, data_path, top_k=1):
     return acc
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: python evaluate.py <vector_file> <data_dir_or_file>")
-        print("Example: python evaluate.py vectors.vec ./data/")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description='FastText Word Vector Evaluation Tool',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Example:
+  python fasttext_evaluation.py vectors.vec ./data/
+  python fasttext_evaluation.py vectors.vec ./data/ --sisg --oov_npz oov_vectors.npz
+        '''
+    )
+    parser.add_argument('vector_file', help='Path to the word vector file')
+    parser.add_argument('data_target', help='Path to evaluation data file or directory')
+    parser.add_argument('--sisg', action='store_true',
+                        help='Enable SISG mode to include OOV word vectors in evaluation')
+    parser.add_argument('--oov_npz', type=str, default=None,
+                        help='Path to NPZ file containing OOV word vectors (required when --sisg is enabled)')
+    
+    args = parser.parse_args()
 
-    vector_file = sys.argv[1]
-    data_target = sys.argv[2] # 폴더 혹은 파일
+    # sisg 옵션이 활성화된 경우 oov_npz 파일 경로가 필요함
+    if args.sisg and not args.oov_npz:
+        parser.error("--oov_npz is required when --sisg is enabled")
+
+    vector_file = args.vector_file
+    data_target = args.data_target
 
     # 1. 벡터 로드
     vectors = load_text_vectors(vector_file)
+
+    # 2. sisg 옵션이 활성화된 경우 OOV 벡터 추가
+    if args.sisg:
+        print(f"\n--- SISG Mode Enabled ---")
+        oov_vectors = load_oov_vectors(args.oov_npz)
+        # OOV 벡터를 기존 벡터에 추가 (기존에 있는 단어는 덮어쓰지 않음)
+        added_count = 0
+        for word, vec in oov_vectors.items():
+            if word not in vectors:
+                vectors[word] = vec
+                added_count += 1
+        print(f"Added {added_count} OOV vectors to vocabulary.")
+        print(f"Total vocabulary size: {len(vectors)}")
 
     # 평가할 파일 목록 수집
     files_to_eval = []
@@ -245,7 +297,7 @@ if __name__ == "__main__":
     else:
         files_to_eval.append(data_target)
 
-    # 2. 평가 실행
+    # 3. 평가 실행
     print("\n--- Starting Evaluation ---")
     for file_path in files_to_eval:
         filename = os.path.basename(file_path).lower()
