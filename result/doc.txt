@@ -1,0 +1,1 @@
+trained word vector files will be saved on this route, check out the word vector reader module from fasttext_evaluation.py
