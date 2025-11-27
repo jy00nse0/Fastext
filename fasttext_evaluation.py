@@ -14,24 +14,20 @@ import argparse
 from scipy.stats import spearmanr
 
 def load_oov_vectors(npz_path):
-    """NPZ 파일에서 OOV 단어 벡터 로드
+    """Load OOV word vectors from NPZ file.
     
     Args:
-        npz_path: OOV 단어 벡터가 저장된 NPZ 파일 경로
+        npz_path: Path to NPZ file containing OOV word vectors
         
     Returns:
-        dict: {word: vector} 형태의 딕셔너리
+        dict: Dictionary mapping words to their vectors (np.ndarray)
     """
     oov_vectors = {}
     print(f"Loading OOV vectors from {npz_path}...")
-    try:
-        data = np.load(npz_path)
+    with np.load(npz_path) as data:
         for word in data.keys():
             oov_vectors[word] = data[word].astype(np.float32)
-        print(f"Loaded {len(oov_vectors)} OOV vectors.")
-    except Exception as e:
-        print(f"Error loading OOV vectors from {npz_path}: {e}")
-        raise e
+    print(f"Loaded {len(oov_vectors)} OOV vectors.")
     return oov_vectors
 
 def load_text_vectors(vector_path):
