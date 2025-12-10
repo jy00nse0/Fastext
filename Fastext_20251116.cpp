@@ -548,7 +548,7 @@ void computeSubwords(const char* word, std::vector<int>& subwords) {
                 ngram[ngram_byte_len] = '\0';
                 
                 // Skip n-grams at the very beginning or end if they match boundaries
-                if (n >= minn && n <= maxn && !(start_pos == 0 || end_pos == buflen)) {
+                if (!(start_pos == 0 || end_pos == buflen)) {
                     int h = (int)(GetWordHash(ngram) % bucket_size);
                     int idx = (int)vocab.size() + h;
                     subwords.push_back(idx);
