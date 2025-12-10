@@ -4,6 +4,8 @@
 #include <iostream>
 #include <algorithm>
 #include <random>
+#include <codecvt>
+#include <locale>
 
 
 #ifdef _MSC_VER
@@ -513,21 +515,38 @@ void computeSubwords(const char* word, std::vector<int>& subwords) {
     char buf[MAX_STRING * 2];
     snprintf(buf, sizeof(buf), "%s", word);
     int buflen = (int)strlen(buf);
-    if (buflen != 0) {
-        for (int i = 0; i < buflen; i++) {
-            if ((buf[i] & 0xC0) == 0x80) continue;
-            for (int n = 1; n <= maxn; n++) {
+    if (buflen == 0) return;
+    
+    // Build a list of UTF-8 character start positions
+    std::vector<int> char_positions;
+    char_positions.push_back(0);
+    for (int i = 1; i < buflen; i++) {
+        // Check if this is the start of a UTF-8 character (not a continuation byte)
+        if ((buf[i] & 0xC0) != 0x80) {
+            char_positions.push_back(i);
+        }
+    }
+    char_positions.push_back(buflen); // End position
+    
+    int num_chars = (int)char_positions.size() - 1;
+    
+    // Generate n-grams based on UTF-8 character boundaries
+    for (int i = 0; i < num_chars; i++) {
+        for (int n = minn; n <= maxn; n++) {
+            if (i + n > num_chars) break;
+            
+            // Extract n-gram from character position i to i+n
+            int start_pos = char_positions[i];
+            int end_pos = char_positions[i + n];
+            int ngram_byte_len = end_pos - start_pos;
+            
+            if (ngram_byte_len > 0 && ngram_byte_len < MAX_STRING) {
                 char ngram[MAX_STRING] = { 0 };
-                int ngram_len = 0;
-                int jj = i;
-                while (jj < buflen && ngram_len < n) {
-                    ngram[ngram_len++] = buf[jj++];
-                    while (jj < buflen && (buf[jj] & 0xC0) == 0x80) {
-                        ngram[ngram_len++] = buf[jj++];
-                    }
-                }
-                ngram[ngram_len] = '\0';
-                if ((n >= 1 && n <= 6) && !(i == 0 || jj == buflen)) {
+                memcpy(ngram, &buf[start_pos], ngram_byte_len);
+                ngram[ngram_byte_len] = '\0';
+                
+                // Skip n-grams at the very beginning or end if they match boundaries
+                if (!(start_pos == 0 || end_pos == buflen)) {
                     int h = (int)(GetWordHash(ngram) % bucket_size);
                     int idx = (int)vocab.size() + h;
                     subwords.push_back(idx);
