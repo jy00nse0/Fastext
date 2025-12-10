@@ -520,12 +520,10 @@ void computeSubwords(const char* word, std::vector<int>& subwords) {
     // Build a list of UTF-8 character start positions
     std::vector<int> char_positions;
     char_positions.push_back(0);
-    for (int i = 0; i < buflen; i++) {
+    for (int i = 1; i < buflen; i++) {
         // Check if this is the start of a UTF-8 character (not a continuation byte)
         if ((buf[i] & 0xC0) != 0x80) {
-            if (i > 0) {
-                char_positions.push_back(i);
-            }
+            char_positions.push_back(i);
         }
     }
     char_positions.push_back(buflen); // End position
