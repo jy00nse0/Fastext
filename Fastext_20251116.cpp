@@ -1,11 +1,11 @@
-﻿// Fastext_20251116.cpp : This file contains the 'main' function. Program execution begins and ends there.
+// Fastext_20251116.cpp : This file contains the 'main' function. Program execution begins and ends there.
 //
 
 #include <iostream>
 #include <algorithm>
 #include <random>
-
-
+#include <string>
+#include <unordered_map>
 #ifdef _MSC_VER
 #include <windows.h>
 #else
@@ -43,6 +43,8 @@
 #endif
 
 char EOS[MAX_STRING] = "</s>";
+char save_subwordvector_file[MAX_STRING] = { 0 };
+
 const int vocab_hash_size = 30000000;  // Maximum 30 * 0.7 = 21M words in the vocabulary
 
 struct vocab_word {
@@ -56,6 +58,8 @@ struct vocab_word {
 };
 
 std::vector<vocab_word> vocab;
+std::unordered_map<int, std::string> bucket_map; // key: bucket h, value: ngram string (최초 등록)
+
 char train_file[MAX_STRING], output_file[MAX_STRING];
 char save_vocab_file[MAX_STRING], read_vocab_file[MAX_STRING], save_model_file[MAX_STRING];
 int binary = 0, debug_mode = 2, window = 5, min_count = 5, num_threads = 12, min_reduce = 1; int label_count = 0;
@@ -96,7 +100,7 @@ int GetHash(char* word);
 void Cleanup();
 void printProgress(long long currentTokens, long long totalTokens, int iterations, clock_t startTime, float currentAlpha);
 void SaveModel(const char* filename);
-void computeSubwords(const char* word, std::vector<int>& subwords);
+void computeSubwords(const char* word, std::vector<int>& ngram_indices);
 void add_subwords(std::vector<int>& line, const char* token, int wid);
 float loss_forward(const int* targets, int targetIndex, struct model_State* state, float current_alpha, bool isUpdate);
 void initModelState(struct model_State* state, int hiddenSize, int outputSize); // <-- add declaration
@@ -414,12 +418,14 @@ void initNgrams() {
     for (size_t i = 0; i < vocab.size(); i++) {
         char word_buf[MAX_STRING * 2];
         vocab[i].subwords.clear();      // 초기화
-        vocab[i].subwords.reserve(50);  // 평균 서브워드 개수
+        vocab[i].subwords.reserve(32);  // 평균 서브워드 개수
         vocab[i].subwords.push_back((int)i); // 자기 자신 id 추가
 
         if (strcmp(vocab[i].word, "</s>") != 0) {   // word가 char*일 경우
             snprintf(word_buf, sizeof(word_buf), "<%s>", vocab[i].word);
-            computeSubwords(word_buf, vocab[i].subwords);
+            std::vector<int> ngram_indices;
+            computeSubwords(word_buf, ngram_indices);
+            vocab[i].subwords.insert(vocab[i].subwords.end(), ngram_indices.begin(), ngram_indices.end());
         }
     }
 }
@@ -509,34 +515,31 @@ void SaveVocab() {
     for (i = 0; i < vocab.size(); i++) fprintf(fo, "%s %lld\n", vocab[i].word, vocab[i].cn);
     fclose(fo);
 }
-void computeSubwords(const char* word, std::vector<int>& subwords) {
-    char buf[MAX_STRING * 2];
-    snprintf(buf, sizeof(buf), "%s", word);
-    int buflen = (int)strlen(buf);
-    if (buflen != 0) {
-        for (int i = 0; i < buflen; i++) {
-            if ((buf[i] & 0xC0) == 0x80) continue;
-            for (int n = 1; n <= maxn; n++) {
-                char ngram[MAX_STRING] = { 0 };
-                int ngram_len = 0;
-                int jj = i;
-                while (jj < buflen && ngram_len < n) {
-                    ngram[ngram_len++] = buf[jj++];
-                    while (jj < buflen && (buf[jj] & 0xC0) == 0x80) {
-                        ngram[ngram_len++] = buf[jj++];
-                    }
-                }
-                ngram[ngram_len] = '\0';
-                if ((n >= 1 && n <= 6) && !(i == 0 || jj == buflen)) {
-                    int h = (int)(GetWordHash(ngram) % bucket_size);
-                    int idx = (int)vocab.size() + h;
-                    subwords.push_back(idx);
+void computeSubwords(const char* word, std::vector<int>& ngram_indices) {
+    int len = (int)strlen(word);
+    int vocab_size = (int)vocab.size();
+
+    for (int i = 0; i < len; i++) {
+        if ((word[i] & 0xC0) == 0x80) continue;
+
+        std::string ngram;
+
+        for (int j = i, n = 1; j < len && n <= maxn; n++) {
+            ngram.push_back(word[j++]);
+
+            while (j < len && (word[j] & 0xC0) == 0x80)
+                ngram.push_back(word[j++]);
+
+            if (n >= minn && !(n == 1 && (i == 0 || j == len))) {
+                uint32_t h = (uint32_t)(GetWordHash(const_cast<char*>(ngram.c_str())) % (uint32_t)bucket_size);
+                ngram_indices.push_back(vocab_size + (int)h);
+                if (bucket_map.find(h) == bucket_map.end()) {
+                    bucket_map.emplace(h, ngram);
                 }
             }
         }
     }
 }
-
 
 
 // 간단한 랜덤 생성기 (C표준 rand() 사용)
@@ -994,6 +997,29 @@ void SaveVectors() {
     printf("\nFastText-compatible vectors saved to %s\n", output_file);
 }
 
+void SaveSubwordVectors(const char* filename) {
+    FILE* fo = fopen(filename, "wb");
+    if (!fo) { printf("Error: Cannot open %s\n", filename); return; }
+    fprintf(fo, "%zu %lld\n", bucket_map.size(), layer1_size);
+    float* vec = (float*)malloc((size_t)layer1_size * sizeof(float));
+    if (!vec) { fclose(fo); return; }
+
+    for (auto &p : bucket_map) {
+        int h = p.first;
+        const std::string &ngram = p.second;
+        size_t idx = (size_t)vocab.size() + (size_t)h;
+        for (size_t j = 0; j < (size_t)layer1_size; ++j) {
+            vec[j] = syn0[idx * (size_t)layer1_size + j];
+        }
+        fprintf(fo, "%s", ngram.c_str());
+        for (size_t j = 0; j < (size_t)layer1_size; ++j) fprintf(fo, " %.6f", vec[j]);
+        fprintf(fo, "\n");
+    }
+    free(vec);
+    fclose(fo);
+    printf("Subword vectors saved to %s\n", filename);
+}
+
 // 진행 상황 및 ETA 출력 함수
 void printProgress(long long currentTokens, long long totalTokens, int iterations,
     clock_t startTime, float currentAlpha) {
@@ -1093,6 +1119,9 @@ void TrainModel() {
     for (int a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
     free(pt);
     SaveVectors();
+    if (save_subwordvector_file[0] != 0) {
+        SaveSubwordVectors(save_subwordvector_file);
+    }
     if (save_model_file[0] != 0) SaveModel(save_model_file);
     Cleanup();
 }
@@ -1216,12 +1245,15 @@ void add_subwords(std::vector<int>& line, const char* token, int wid) {
                     }
                 } else {
                     int new_idx = AddWordToVocab(concat);
-                    if (new_idx >= 0) {
-                        computeSubwords(concat, vocab[new_idx].subwords);
-                        for (size_t i = 0; i < vocab[new_idx].subwords.size(); i++) {
-                            line.push_back(vocab[new_idx].subwords[i]);
+                        if (new_idx >= 0) {
+                            std::vector<int> ngram_indices;
+                            ngram_indices.reserve(32);
+                            computeSubwords(concat, ngram_indices);
+                            vocab[new_idx].subwords.insert(vocab[new_idx].subwords.end(), ngram_indices.begin(), ngram_indices.end());
+                            for (size_t ii = 0; ii < vocab[new_idx].subwords.size(); ii++) {
+                                line.push_back(vocab[new_idx].subwords[ii]);
+                            }
                         }
-                    }
                 }
             } else {
                 if (debug_mode > 0) {
@@ -1312,6 +1344,7 @@ int main(int argc, char** argv)
     output_file[0] = 0;
     save_vocab_file[0] = 0;
     read_vocab_file[0] = 0;
+    save_subwordvector_file[0] = 0;
 
     // Initialize requested defaults before parsing command-line arguments
     seed = 0;
@@ -1329,6 +1362,7 @@ int main(int argc, char** argv)
     if ((i = ArgPos((char*)"-train", argc, argv)) > 0) strcpy_s(train_file, sizeof(train_file), argv[i + 1]);
     if ((i = ArgPos((char*)"-output", argc, argv)) > 0) strcpy_s(output_file, sizeof(output_file), argv[i + 1]);
     if ((i = ArgPos((char*)"-save-model", argc, argv)) > 0) strcpy_s(save_model_file, sizeof(save_model_file), argv[i + 1]);
+    if ((i = ArgPos((char*)"-save-subwordvectors", argc, argv)) > 0) strcpy(save_subwordvector_file,sizeof(save_subwordvector_file), argv[i + 1]);
     if ((i = ArgPos((char*)"-save-vocab", argc, argv)) > 0) strcpy_s(save_vocab_file, sizeof(save_vocab_file), argv[i + 1]);
     if ((i = ArgPos((char*)"-read-vocab", argc, argv)) > 0) strcpy_s(read_vocab_file, sizeof(read_vocab_file), argv[i + 1]);
     if ((i = ArgPos((char*)"-eos", argc, argv)) > 0) strcpy_s(EOS, sizeof(EOS), argv[i + 1]);
@@ -1338,6 +1372,7 @@ int main(int argc, char** argv)
     if ((i = ArgPos((char*)"-train", argc, argv)) > 0) strcpy(train_file, argv[i + 1]);
     if ((i = ArgPos((char*)"-output", argc, argv)) > 0) strcpy(output_file, argv[i + 1]);
     if ((i = ArgPos((char*)"-save-model", argc, argv)) > 0) strcpy(save_model_file, argv[i + 1]);
+    if ((i = ArgPos((char*)"-save-subwordvectors", argc, argv)) > 0) strcpy(save_subwordvector_file, argv[i + 1]);
     if ((i = ArgPos((char*)"-save-vocab", argc, argv)) > 0) strcpy(save_vocab_file, argv[i + 1]);
     if ((i = ArgPos((char*)"-read-vocab", argc, argv)) > 0) strcpy(read_vocab_file, argv[i + 1]);
     if ((i = ArgPos((char*)"-eos", argc, argv)) > 0) strcpy(EOS, argv[i + 1]);
