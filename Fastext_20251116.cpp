@@ -1172,27 +1172,26 @@ void SaveOovVectors(const char* test_path) {
             // CSV 파싱: 0열과 1열 추출
             std::istringstream ss(line);
             std::string col0, col1;
-            if (std::getline(ss, col0, ',')) {
+            if (std::getline(ss, col0, ',') && !col0.empty()) {
                 test_words.insert(col0);
             }
-            if (std::getline(ss, col1, ',')) {
+            if (std::getline(ss, col1, ',') && !col1.empty()) {
                 test_words.insert(col1);
             }
         }
         infile.close();
     }
 
+    // vocab을 hash set에 저장하여 빠른 조회
+    std::unordered_set<std::string> vocab_set;
+    for (size_t i = 0; i < vocab.size(); i++) {
+        vocab_set.insert(std::string(vocab[i].word));
+    }
+    
     // OOV 단어만 필터링 (vocab에 없는 단어)
     std::vector<std::string> oov_words;
     for (const auto& word : test_words) {
-        bool found = false;
-        for (size_t i = 0; i < vocab.size(); i++) {
-            if (strcmp(vocab[i].word, word.c_str()) == 0) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
+        if (vocab_set.find(word) == vocab_set.end()) {
             oov_words.push_back(word);
         }
     }
@@ -1223,6 +1222,11 @@ void SaveOovVectors(const char* test_path) {
 
     // 각 OOV 단어에 대해 서브워드 벡터 계산
     for (const auto& word : oov_words) {
+        // 단어 길이 체크 (buffer overflow 방지)
+        if (word.length() > MAX_STRING * 2 - 3) {
+            continue; // 너무 긴 단어는 건너뛰기
+        }
+        
         // 단어를 <word> 형태로 변환
         char word_buf[MAX_STRING * 2];
         snprintf(word_buf, sizeof(word_buf), "<%s>", word.c_str());
