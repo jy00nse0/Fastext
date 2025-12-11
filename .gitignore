@@ -1,5 +1,6 @@
 # Compiled binaries
 Fastext_patched
+Fastext_20251116
 *.o
 *.out
 *.exe
