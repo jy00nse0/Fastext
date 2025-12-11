@@ -6,10 +6,15 @@
 #include <random>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <fstream>
+#include <sstream>
 #ifdef _MSC_VER
 #include <windows.h>
 #else
 #include <unistd.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #endif
 
 #define _CRT_SECURE_NO_WARNINGS
@@ -43,7 +48,8 @@
 #endif
 
 char EOS[MAX_STRING] = "</s>";
-char save_subwordvector_file[MAX_STRING] = { 0 };
+char test_files_path[MAX_STRING] = { 0 };
+int save_oovvectors = 0;
 
 const int vocab_hash_size = 30000000;  // Maximum 30 * 0.7 = 21M words in the vocabulary
 
@@ -58,7 +64,6 @@ struct vocab_word {
 };
 
 std::vector<vocab_word> vocab;
-std::unordered_map<int, std::string> bucket_map; // key: bucket h, value: ngram string (최초 등록)
 
 char train_file[MAX_STRING], output_file[MAX_STRING];
 char save_vocab_file[MAX_STRING], read_vocab_file[MAX_STRING], save_model_file[MAX_STRING];
@@ -105,6 +110,7 @@ void add_subwords(std::vector<int>& line, const char* token, int wid);
 float loss_forward(const int* targets, int targetIndex, struct model_State* state, float current_alpha, bool isUpdate);
 void initModelState(struct model_State* state, int hiddenSize, int outputSize); // <-- add declaration
 void InitNet(); // <-- add declaration
+void SaveOovVectors(const char* test_path);
 
 struct model_State {
     float lossValue_;
@@ -533,9 +539,6 @@ void computeSubwords(const char* word, std::vector<int>& ngram_indices) {
             if (n >= minn && !(n == 1 && (i == 0 || j == len))) {
                 uint32_t h = (uint32_t)(GetWordHash(const_cast<char*>(ngram.c_str())) % (uint32_t)bucket_size);
                 ngram_indices.push_back(vocab_size + (int)h);
-                if (bucket_map.find(h) == bucket_map.end()) {
-                    bucket_map.emplace(h, ngram);
-                }
             }
         }
     }
@@ -997,28 +1000,7 @@ void SaveVectors() {
     printf("\nFastText-compatible vectors saved to %s\n", output_file);
 }
 
-void SaveSubwordVectors(const char* filename) {
-    FILE* fo = fopen(filename, "wb");
-    if (!fo) { printf("Error: Cannot open %s\n", filename); return; }
-    fprintf(fo, "%zu %lld\n", bucket_map.size(), layer1_size);
-    float* vec = (float*)malloc((size_t)layer1_size * sizeof(float));
-    if (!vec) { fclose(fo); return; }
 
-    for (auto &p : bucket_map) {
-        int h = p.first;
-        const std::string &ngram = p.second;
-        size_t idx = (size_t)vocab.size() + (size_t)h;
-        for (size_t j = 0; j < (size_t)layer1_size; ++j) {
-            vec[j] = syn0[idx * (size_t)layer1_size + j];
-        }
-        fprintf(fo, "%s", ngram.c_str());
-        for (size_t j = 0; j < (size_t)layer1_size; ++j) fprintf(fo, " %.6f", vec[j]);
-        fprintf(fo, "\n");
-    }
-    free(vec);
-    fclose(fo);
-    printf("Subword vectors saved to %s\n", filename);
-}
 
 // 진행 상황 및 ETA 출력 함수
 void printProgress(long long currentTokens, long long totalTokens, int iterations,
@@ -1105,6 +1087,164 @@ void* TrainModelThread(void* arg) {
     return NULL;
 }
 
+// SaveOovVectors: 테스트 파일(들)에서 OOV 단어 추출하여 벡터 생성 및 저장
+void SaveOovVectors(const char* test_path) {
+    std::unordered_set<std::string> test_words;
+    std::vector<std::string> test_files;
+    
+    // test_path가 파일인지 디렉토리인지 확인
+#ifdef _MSC_VER
+    DWORD attrs = GetFileAttributesA(test_path);
+    bool is_directory = (attrs != INVALID_FILE_ATTRIBUTES) && (attrs & FILE_ATTRIBUTE_DIRECTORY);
+#else
+    struct stat st;
+    bool is_directory = false;
+    if (stat(test_path, &st) == 0) {
+        is_directory = S_ISDIR(st.st_mode);
+    }
+#endif
+
+    // 디렉토리면 안의 모든 파일을 추가, 아니면 단일 파일로 처리
+    if (is_directory) {
+#ifdef _MSC_VER
+        WIN32_FIND_DATAA findData;
+        char searchPath[MAX_STRING];
+        snprintf(searchPath, sizeof(searchPath), "%s\\*", test_path);
+        HANDLE hFind = FindFirstFileA(searchPath, &findData);
+        if (hFind != INVALID_HANDLE_VALUE) {
+            do {
+                if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+                    char fullPath[MAX_STRING];
+                    snprintf(fullPath, sizeof(fullPath), "%s\\%s", test_path, findData.cFileName);
+                    test_files.push_back(std::string(fullPath));
+                }
+            } while (FindNextFileA(hFind, &findData));
+            FindClose(hFind);
+        }
+#else
+        DIR* dir = opendir(test_path);
+        if (dir) {
+            struct dirent* ent;
+            while ((ent = readdir(dir)) != NULL) {
+                if (ent->d_type == DT_REG || ent->d_type == DT_UNKNOWN) {
+                    char fullPath[MAX_STRING];
+                    snprintf(fullPath, sizeof(fullPath), "%s/%s", test_path, ent->d_name);
+                    // 파일인지 재확인
+                    struct stat st2;
+                    if (stat(fullPath, &st2) == 0 && S_ISREG(st2.st_mode)) {
+                        test_files.push_back(std::string(fullPath));
+                    }
+                }
+            }
+            closedir(dir);
+        }
+#endif
+    } else {
+        // 단일 파일
+        test_files.push_back(std::string(test_path));
+    }
+
+    // 각 파일에서 0열과 1열의 단어들을 추출
+    for (const auto& file : test_files) {
+        std::ifstream infile(file);
+        if (!infile.is_open()) continue;
+        
+        std::string line;
+        while (std::getline(infile, line)) {
+            // UTF-8 BOM 제거
+            if (line.size() >= 3 && 
+                (unsigned char)line[0] == 0xEF && 
+                (unsigned char)line[1] == 0xBB && 
+                (unsigned char)line[2] == 0xBF) {
+                line = line.substr(3);
+            }
+            
+            // CSV 파싱: 0열과 1열 추출
+            std::istringstream ss(line);
+            std::string col0, col1;
+            if (std::getline(ss, col0, ',')) {
+                test_words.insert(col0);
+            }
+            if (std::getline(ss, col1, ',')) {
+                test_words.insert(col1);
+            }
+        }
+        infile.close();
+    }
+
+    // OOV 단어만 필터링 (vocab에 없는 단어)
+    std::vector<std::string> oov_words;
+    for (const auto& word : test_words) {
+        bool found = false;
+        for (size_t i = 0; i < vocab.size(); i++) {
+            if (strcmp(vocab[i].word, word.c_str()) == 0) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            oov_words.push_back(word);
+        }
+    }
+
+    if (oov_words.empty()) {
+        printf("No OOV words found in test files.\n");
+        return;
+    }
+
+    // OOV 벡터 파일 경로 생성
+    char oov_output_file[MAX_STRING];
+    snprintf(oov_output_file, sizeof(oov_output_file), "%s_oov.vec", output_file);
+
+    FILE* fo = fopen(oov_output_file, "wb");
+    if (!fo) {
+        printf("Error: Cannot open %s\n", oov_output_file);
+        return;
+    }
+
+    // 헤더: 단어 수와 벡터 차원
+    fprintf(fo, "%zu %lld\n", oov_words.size(), layer1_size);
+
+    float* vec = (float*)malloc((size_t)layer1_size * sizeof(float));
+    if (!vec) {
+        fclose(fo);
+        return;
+    }
+
+    // 각 OOV 단어에 대해 서브워드 벡터 계산
+    for (const auto& word : oov_words) {
+        // 단어를 <word> 형태로 변환
+        char word_buf[MAX_STRING * 2];
+        snprintf(word_buf, sizeof(word_buf), "<%s>", word.c_str());
+        
+        // computeSubwords로 서브워드 인덱스 구하기
+        std::vector<int> ngram_indices;
+        computeSubwords(word_buf, ngram_indices);
+        
+        // 벡터 초기화
+        memset(vec, 0, (size_t)layer1_size * sizeof(float));
+        
+        // 서브워드 벡터들을 합산
+        for (size_t i = 0; i < ngram_indices.size(); i++) {
+            size_t subword_id = (size_t)ngram_indices[i];
+            for (size_t j = 0; j < (size_t)layer1_size; j++) {
+                vec[j] += syn0[subword_id * (size_t)layer1_size + j];
+            }
+        }
+        
+        // .vec 형식으로 저장
+        fprintf(fo, "%s", word.c_str());
+        for (size_t j = 0; j < (size_t)layer1_size; j++) {
+            fprintf(fo, " %.6f", vec[j]);
+        }
+        fprintf(fo, "\n");
+    }
+
+    free(vec);
+    fclose(fo);
+    printf("OOV vectors saved to %s (%zu words)\n", oov_output_file, oov_words.size());
+}
+
 void TrainModel() {
     alpha = starting_alpha;
     LearnVocabFromTrainFile();
@@ -1119,8 +1259,8 @@ void TrainModel() {
     for (int a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
     free(pt);
     SaveVectors();
-    if (save_subwordvector_file[0] != 0) {
-        SaveSubwordVectors(save_subwordvector_file);
+    if (save_oovvectors && test_files_path[0] != 0) {
+        SaveOovVectors(test_files_path);
     }
     if (save_model_file[0] != 0) SaveModel(save_model_file);
     Cleanup();
@@ -1344,7 +1484,7 @@ int main(int argc, char** argv)
     output_file[0] = 0;
     save_vocab_file[0] = 0;
     read_vocab_file[0] = 0;
-    save_subwordvector_file[0] = 0;
+    test_files_path[0] = 0;
 
     // Initialize requested defaults before parsing command-line arguments
     seed = 0;
@@ -1362,7 +1502,7 @@ int main(int argc, char** argv)
     if ((i = ArgPos((char*)"-train", argc, argv)) > 0) strcpy_s(train_file, sizeof(train_file), argv[i + 1]);
     if ((i = ArgPos((char*)"-output", argc, argv)) > 0) strcpy_s(output_file, sizeof(output_file), argv[i + 1]);
     if ((i = ArgPos((char*)"-save-model", argc, argv)) > 0) strcpy_s(save_model_file, sizeof(save_model_file), argv[i + 1]);
-    if ((i = ArgPos((char*)"-save-subwordvectors", argc, argv)) > 0) strcpy(save_subwordvector_file,sizeof(save_subwordvector_file), argv[i + 1]);
+    if ((i = ArgPos((char*)"-test-files", argc, argv)) > 0) strcpy_s(test_files_path, sizeof(test_files_path), argv[i + 1]);
     if ((i = ArgPos((char*)"-save-vocab", argc, argv)) > 0) strcpy_s(save_vocab_file, sizeof(save_vocab_file), argv[i + 1]);
     if ((i = ArgPos((char*)"-read-vocab", argc, argv)) > 0) strcpy_s(read_vocab_file, sizeof(read_vocab_file), argv[i + 1]);
     if ((i = ArgPos((char*)"-eos", argc, argv)) > 0) strcpy_s(EOS, sizeof(EOS), argv[i + 1]);
@@ -1372,7 +1512,7 @@ int main(int argc, char** argv)
     if ((i = ArgPos((char*)"-train", argc, argv)) > 0) strcpy(train_file, argv[i + 1]);
     if ((i = ArgPos((char*)"-output", argc, argv)) > 0) strcpy(output_file, argv[i + 1]);
     if ((i = ArgPos((char*)"-save-model", argc, argv)) > 0) strcpy(save_model_file, argv[i + 1]);
-    if ((i = ArgPos((char*)"-save-subwordvectors", argc, argv)) > 0) strcpy(save_subwordvector_file, argv[i + 1]);
+    if ((i = ArgPos((char*)"-test-files", argc, argv)) > 0) strcpy(test_files_path, argv[i + 1]);
     if ((i = ArgPos((char*)"-save-vocab", argc, argv)) > 0) strcpy(save_vocab_file, argv[i + 1]);
     if ((i = ArgPos((char*)"-read-vocab", argc, argv)) > 0) strcpy(read_vocab_file, argv[i + 1]);
     if ((i = ArgPos((char*)"-eos", argc, argv)) > 0) strcpy(EOS, argv[i + 1]);
@@ -1392,6 +1532,7 @@ int main(int argc, char** argv)
     if ((i = ArgPos((char*)"-min-count", argc, argv)) > 0) min_count = atoi(argv[i + 1]);
     if ((i = ArgPos((char*)"-classes", argc, argv)) > 0) classes = atoi(argv[i + 1]);
     if ((i = ArgPos((char*)"-seed", argc, argv)) > 0) seed = atoi(argv[i + 1]);
+    if (ArgPos((char*)"-save-oovvectors", argc, argv) > 0) save_oovvectors = 1;
 
     // Removed the previous hard-coded debug/training overrides so command-line args are honored.
     // Defaults were already set above. Users should supply -train, -output etc. via command-line.
