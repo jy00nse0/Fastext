@@ -936,6 +936,16 @@ int ArgPos(char* str, int argc, char** argv) {
     }
     return -1;
 }
+
+// Check if a flag is present (no argument required)
+int HasFlag(char* str, int argc, char** argv) {
+    for (int a = 1; a < argc; a++) {
+        if (!strcmp(str, argv[a])) {
+            return 1;
+        }
+    }
+    return 0;
+}
 // 벡터 저장
 
 int keepTraining(const long long totaltokens, long long tokenCount_) {  // 또는 bool keepTraining
@@ -1468,8 +1478,10 @@ void InitNet() {
     }
     float uni = 1.0f / static_cast<float>(layer1_size);
     std::uniform_real_distribution<float> uniform_dist_w_in(-uni, uni);
-    for (a = 0; a < vocab.size(); a++) for (b = 0; b < (size_t)layer1_size; b++) {
-        syn0[a * (size_t)layer1_size + b] = uniform_dist_w_in(rng);
+    for (a = 0; a < (size_t)vocab.size() + (size_t)bucket_size; a++) {
+        for (b = 0; b < (size_t)layer1_size; b++) {
+            syn0[a * (size_t)layer1_size + b] = uniform_dist_w_in(rng);
+        }
     }
     if (expTable) {
         printf("expTable[500]=%.6f (should be ~0.5)\n", expTable[500]);
@@ -1532,7 +1544,7 @@ int main(int argc, char** argv)
     if ((i = ArgPos((char*)"-min-count", argc, argv)) > 0) min_count = atoi(argv[i + 1]);
     if ((i = ArgPos((char*)"-classes", argc, argv)) > 0) classes = atoi(argv[i + 1]);
     if ((i = ArgPos((char*)"-seed", argc, argv)) > 0) seed = atoi(argv[i + 1]);
-    if (ArgPos((char*)"-save-oovvectors", argc, argv) > 0) save_oovvectors = 1;
+    if (HasFlag((char*)"-save-oovvectors", argc, argv)) save_oovvectors = 1;
 
     // Removed the previous hard-coded debug/training overrides so command-line args are honored.
     // Defaults were already set above. Users should supply -train, -output etc. via command-line.
