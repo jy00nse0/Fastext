@@ -6,6 +6,32 @@ FastText-style word embeddings training and evaluation tools.
 
 This repository provides tools for training word vectors and evaluating them using word analogy tests, with a focus on Czech language support.
 
+## Variant Source Files
+
+The repository includes four variant implementations of Fastext_20251116.cpp for comparison:
+
+### Fastext_20251116_v1.cpp (Baseline)
+- Original implementation using C-style strings
+- Function signature: `void computeSubwords(const char* word, std::vector<int>& subwords)`
+- Uses char buffers and standard C string operations
+
+### Fastext_20251116_v2.cpp (Modern C++)
+- Uses std::string instead of const char*
+- Function signature: `void computeSubwords(const std::string& word, std::vector<int>& subwords)`
+- More idiomatic C++ approach with string references
+
+### Fastext_20251116_v3.cpp (With N-gram Output)
+- Captures generated n-grams for analysis
+- Function signature: `void computeSubwords(const char* word, std::vector<int>& subwords, std::vector<std::string>& ngrams)`
+- Additional output parameter stores actual n-gram strings
+- Uses configurable minn parameter
+
+### Fastext_20251116_v4.cpp (Configurable Parameters)
+- Allows runtime override of n-gram bounds
+- Function signature: `void computeSubwords(const char* word, std::vector<int>& subwords, int minNgram = -1, int maxNgram = -1)`
+- Pre-allocates vector space for better performance
+- Optional parameters for flexibility
+
 ## Scripts
 
 ### word2vec.py
