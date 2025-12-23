@@ -8,8 +8,11 @@ https://github.com/Svobikl/cz_corpus/tree/master/pairs
 Based on fastText's analogies() implementation:
 https://github.com/facebookresearch/fastText/blob/main/src/main.cc
 
+Supports both fastText .vec (text) and .bin (binary) formats.
+
 Usage:
     python analogy_test_cs.py --vectors vec_cs.vec --download-test
+    python analogy_test_cs.py --vectors vec_cs.bin --download-test
     python analogy_test_cs.py --vectors vec_cs.vec --test-file czech_emb_corpus_no_phrase.txt
     python analogy_test_cs.py --vectors vec_cs.vec --convert-csv pairs/*.csv
 """
@@ -19,23 +22,46 @@ import os
 import sys
 import urllib.request
 import numpy as np
+import struct
 from collections import defaultdict
 
 
 class WordVectors:
-    """Load and query word vectors in fastText .vec format"""
+    """Load and query word vectors in fastText .vec or .bin format"""
     
     def __init__(self, vec_path):
-        """Load word vectors from fastText .vec format file
+        """Load word vectors from fastText format file
         
-        Format:
-        First line: <vocab_size> <vector_dim>
-        Following lines: <word> <vec[0]> <vec[1]> ... <vec[dim-1]>
+        Supports both:
+        - Text .vec format:
+          First line: <vocab_size> <vector_dim>
+          Following lines: <word> <vec[0]> <vec[1]> ... <vec[dim-1]>
+        
+        - Binary .bin format:
+          fastText binary format with vocab and vectors
         """
         self.word_to_vec = {}
         self.vector_dim = 0
         
         print(f"Loading vectors from {vec_path}...")
+        
+        # Detect file format based on extension or content
+        if vec_path.endswith('.bin'):
+            self._load_binary(vec_path)
+        else:
+            self._load_text(vec_path)
+        
+        print(f"Loaded {len(self.word_to_vec)} word vectors")
+        
+        # Normalize vectors for cosine similarity (in-place for memory efficiency)
+        print("Normalizing vectors...")
+        for word in self.word_to_vec:
+            norm = np.linalg.norm(self.word_to_vec[word])
+            if norm > 0:
+                self.word_to_vec[word] /= norm
+    
+    def _load_text(self, vec_path):
+        """Load word vectors from text .vec format"""
         with open(vec_path, 'r', encoding='utf-8') as f:
             # Read header
             header = f.readline().strip().split()
@@ -56,15 +82,166 @@ class WordVectors:
                 
                 if line_num % 10000 == 0:
                     print(f"  Loaded {line_num} vectors...", flush=True)
+    
+    def _load_binary(self, bin_path):
+        """Load word vectors from binary .bin format
         
-        print(f"Loaded {len(self.word_to_vec)} word vectors")
+        Binary format structure:
+        - Header with magic number, version, metadata
+        - Dictionary with vocabulary
+        - Matrix with vectors
+        """
+        try:
+            with open(bin_path, 'rb') as f:
+                # Read magic number and version
+                magic_data = f.read(4)
+                if len(magic_data) != 4:
+                    raise ValueError("File too short: cannot read magic number")
+                magic = struct.unpack('i', magic_data)[0]
+                
+                # Validate magic number (fastText uses 793712314)
+                if magic != 793712314:
+                    raise ValueError(f"Invalid fastText binary file: magic number {magic} != 793712314")
+                
+                version_data = f.read(4)
+                if len(version_data) != 4:
+                    raise ValueError("File too short: cannot read version")
+                version = struct.unpack('i', version_data)[0]
+                
+                # Read dimensions
+                vocab_data = f.read(8)
+                if len(vocab_data) != 8:
+                    raise ValueError("File too short: cannot read vocabulary size")
+                vocab_size = struct.unpack('q', vocab_data)[0]
+                
+                dim_data = f.read(8)
+                if len(dim_data) != 8:
+                    raise ValueError("File too short: cannot read vector dimension")
+                self.vector_dim = struct.unpack('q', dim_data)[0]
+                
+                # Validate dimensions
+                if vocab_size <= 0 or vocab_size > 100000000:
+                    raise ValueError(f"Invalid vocabulary size: {vocab_size}")
+                if self.vector_dim <= 0 or self.vector_dim > 10000:
+                    raise ValueError(f"Invalid vector dimension: {self.vector_dim}")
+                
+                # Skip other metadata (args)
+                nwords = struct.unpack('i', f.read(4))[0]
+                size_ = struct.unpack('q', f.read(8))[0]
+                nwords_arg = struct.unpack('i', f.read(4))[0]
+                bucket_arg = struct.unpack('i', f.read(4))[0]
+                minn_arg = struct.unpack('i', f.read(4))[0]
+                maxn_arg = struct.unpack('i', f.read(4))[0]
+                neg_arg = struct.unpack('i', f.read(4))[0]
+                wordNgrams_arg = struct.unpack('i', f.read(4))[0]
+                loss_arg = struct.unpack('i', f.read(4))[0]
+                model_arg = struct.unpack('i', f.read(4))[0]
+                epoch_arg = struct.unpack('i', f.read(4))[0]
+                minCount_arg = struct.unpack('q', f.read(8))[0]
+                label_arg_len_data = f.read(4)
+                if len(label_arg_len_data) != 4:
+                    raise ValueError("File truncated: cannot read label_arg length")
+                label_arg_len = struct.unpack('i', label_arg_len_data)[0]
+                if label_arg_len < 0 or label_arg_len > 1000:
+                    raise ValueError(f"Invalid label_arg length: {label_arg_len}")
+                label_arg_data = f.read(label_arg_len)
+                if len(label_arg_data) != label_arg_len:
+                    raise ValueError(f"File truncated: expected {label_arg_len} bytes for label_arg")
+                label_arg = label_arg_data.decode('utf-8')
+                t_arg = struct.unpack('d', f.read(8))[0]
+                lrUpdateRate_arg = struct.unpack('i', f.read(4))[0]
+                dim_arg = struct.unpack('i', f.read(4))[0]
+                ws_arg = struct.unpack('i', f.read(4))[0]
+                lr_arg = struct.unpack('d', f.read(8))[0]
+                verbose_arg = struct.unpack('i', f.read(4))[0]
+                pretrainedVectors_arg_len_data = f.read(4)
+                if len(pretrainedVectors_arg_len_data) != 4:
+                    raise ValueError("File truncated: cannot read pretrainedVectors_arg length")
+                pretrainedVectors_arg_len = struct.unpack('i', pretrainedVectors_arg_len_data)[0]
+                if pretrainedVectors_arg_len < 0 or pretrainedVectors_arg_len > 10000:
+                    raise ValueError(f"Invalid pretrainedVectors_arg length: {pretrainedVectors_arg_len}")
+                pretrainedVectors_arg_data = f.read(pretrainedVectors_arg_len)
+                if len(pretrainedVectors_arg_data) != pretrainedVectors_arg_len:
+                    raise ValueError(f"File truncated: expected {pretrainedVectors_arg_len} bytes for pretrainedVectors_arg")
+                pretrainedVectors_arg = pretrainedVectors_arg_data.decode('utf-8')
+                saveOutput_arg = struct.unpack('?', f.read(1))[0]
+                seed_arg = struct.unpack('i', f.read(4))[0]
+                qout_arg = struct.unpack('?', f.read(1))[0]
+                retrain_arg = struct.unpack('?', f.read(1))[0]
+                qnorm_arg = struct.unpack('?', f.read(1))[0]
+                cutoff_arg = struct.unpack('Q', f.read(8))[0]
+                dsub_arg = struct.unpack('Q', f.read(8))[0]
+                
+                print(f"Vocabulary size: {vocab_size}, Vector dimension: {self.vector_dim}")
+                
+                # Read vocabulary (dictionary)
+                dict_size = struct.unpack('i', f.read(4))[0]
+                dict_nwords = struct.unpack('i', f.read(4))[0]
+                dict_nlabels = struct.unpack('i', f.read(4))[0]
+                dict_ntokens = struct.unpack('q', f.read(8))[0]
+                dict_pruneidx_size = struct.unpack('q', f.read(8))[0]
+                
+                # Read words
+                words = []
+                for i in range(dict_size):
+                    word_len_data = f.read(4)
+                    if len(word_len_data) != 4:
+                        raise ValueError(f"File truncated: cannot read word length for word {i}")
+                    word_len = struct.unpack('i', word_len_data)[0]
+                    
+                    # Validate word length to prevent excessive memory allocation
+                    if word_len < 0 or word_len > 10000:
+                        raise ValueError(f"Invalid word length {word_len} for word {i}")
+                    
+                    word_data = f.read(word_len)
+                    if len(word_data) != word_len:
+                        raise ValueError(f"File truncated: expected {word_len} bytes for word {i}, got {len(word_data)}")
+                    word = word_data.decode('utf-8')
+                    
+                    count = struct.unpack('q', f.read(8))[0]
+                    entry_type = struct.unpack('b', f.read(1))[0]
+                    words.append(word)
+                    
+                    if (i + 1) % 10000 == 0:
+                        print(f"  Loaded {i + 1} words...", flush=True)
+                
+                # Skip pruned index if exists
+                if dict_pruneidx_size > 0:
+                    for _ in range(dict_pruneidx_size):
+                        struct.unpack('i', f.read(4))
+                        struct.unpack('i', f.read(4))
+                
+                # Read input matrix (word vectors)
+                input_m = struct.unpack('?', f.read(1))[0]
+                input_m_rows = struct.unpack('q', f.read(8))[0]
+                input_m_cols = struct.unpack('q', f.read(8))[0]
+                
+                # Validate matrix dimensions
+                if input_m_cols != self.vector_dim:
+                    raise ValueError(f"Matrix dimension mismatch: expected {self.vector_dim}, got {input_m_cols}")
+                
+                # Read vectors
+                print(f"Reading {input_m_rows} vectors of dimension {input_m_cols}...")
+                expected_bytes = input_m_cols * 4  # 4 bytes per float
+                for i in range(min(len(words), input_m_rows)):
+                    vec_data = f.read(expected_bytes)
+                    if len(vec_data) != expected_bytes:
+                        raise ValueError(f"File truncated: expected {expected_bytes} bytes for vector {i}, got {len(vec_data)}")
+                    vec = np.frombuffer(vec_data, dtype=np.float32)
+                    if i < dict_nwords:  # Only store word vectors, not subword vectors
+                        self.word_to_vec[words[i]] = vec.copy()
+                    
+                    if (i + 1) % 10000 == 0:
+                        print(f"  Loaded {i + 1} vectors...", flush=True)
         
-        # Normalize vectors for cosine similarity (in-place for memory efficiency)
-        print("Normalizing vectors...")
-        for word in self.word_to_vec:
-            norm = np.linalg.norm(self.word_to_vec[word])
-            if norm > 0:
-                self.word_to_vec[word] /= norm
+        except struct.error as e:
+            raise ValueError(f"Failed to parse binary file: {e}. File may be corrupted or not a valid fastText binary format.")
+        except UnicodeDecodeError as e:
+            raise ValueError(f"Failed to decode text in binary file: {e}. File may be corrupted.")
+        except Exception as e:
+            if isinstance(e, ValueError):
+                raise
+            raise ValueError(f"Error loading binary file: {e}")
     
     def __contains__(self, word):
         """Check if word exists in vocabulary"""
@@ -362,7 +539,7 @@ Examples:
     )
     
     parser.add_argument("--vectors", type=str, required=True,
-                        help="Path to word vectors file (.vec format)")
+                        help="Path to word vectors file (.vec or .bin format)")
     parser.add_argument("--test-file", type=str,
                         help="Path to analogy test file")
     parser.add_argument("--download-test", action="store_true",
